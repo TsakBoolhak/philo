@@ -166,21 +166,13 @@ int	get_time(unsigned long *time)
 
 int	check_death(t_philo *philo)
 {
-	if (pthread_mutex_lock(&philo->quit->quitlock) != 0)
-	{
-		//handle lock failure
-		return (1);
-	}
+	pthread_mutex_lock(&philo->quit->quitlock);
 	if (philo->quit->status != 0)
 	{
 		pthread_mutex_unlock(&philo->quit->quitlock);
 		return (1);
 	}
-	if (pthread_mutex_unlock(&philo->quit->quitlock) != 0)
-	{
-		//handle unlock failure
-		return (1);
-	}
+	pthread_mutex_unlock(&philo->quit->quitlock);
 	return (0);
 }
 
@@ -194,28 +186,15 @@ int	handle_death(t_philo *philo)
 		return (-1);
 	if (time - philo->last_meal_time >= (unsigned long)philo->config[TIME_TO_DIE])
 	{
-		if (pthread_mutex_lock(&philo->quit->quitlock) != 0)
-			return (-1);
-		if (pthread_mutex_lock(philo->msg) != 0)
-		{
-			//handle lock failure
-			return (-1);
-		}
+		pthread_mutex_lock(&philo->quit->quitlock);
 		if (philo->quit->status == 0)
 		{
+			pthread_mutex_lock(philo->msg);
 			printf("[%lu ms]Philo #%d died\n", time - philo->starting_time, philo->id);
 			philo->quit->status = philo->id;
+			pthread_mutex_unlock(philo->msg);
 		}
-		if (pthread_mutex_unlock(philo->msg) != 0)
-		{
-			//handle lock failure
-			return (-1);
-		}
-		if (pthread_mutex_unlock(&philo->quit->quitlock) != 0)
-		{
-			//handle unlock failure
-			return (-1);
-		}
+		pthread_mutex_unlock(&philo->quit->quitlock);
 		return (1);
 	}
 	return (0);
@@ -223,11 +202,9 @@ int	handle_death(t_philo *philo)
 
 int	put_down_fork(t_fork *fork)
 {
-	if (pthread_mutex_lock(&fork->forklock))
-		return (-1);
+	pthread_mutex_lock(&fork->forklock);
 	fork->status = UNLOCKED;
-	if (pthread_mutex_unlock(&fork->forklock))
-		return (-1);
+	pthread_mutex_unlock(&fork->forklock);
 	return (0);
 }
 
@@ -242,18 +219,15 @@ int	put_down_both_forks(t_philo *philo)
 
 int	take_fork(t_fork *fork)
 {
-	if (pthread_mutex_lock(&fork->forklock))
-		return (-1);
+	pthread_mutex_lock(&fork->forklock);
 	if (fork->status == LOCKED)
 	{
-		if (pthread_mutex_unlock(&fork->forklock))
-			return (-1);
+		pthread_mutex_unlock(&fork->forklock);
 		return (0);
 	}
 	else
 		fork->status = LOCKED;
-	if (pthread_mutex_unlock(&fork->forklock))
-		return (-1);
+	pthread_mutex_unlock(&fork->forklock);
 	return (1);
 }
 
@@ -261,33 +235,25 @@ int	print_eat_msg(t_philo *philo)
 {
 	unsigned long	time;
 
-	if (pthread_mutex_lock(philo->msg) != 0)
-		return (-1);
 	if (get_time(&time))
 	{
-		if (pthread_mutex_unlock(philo->msg) != 0)
-			return (-1);
 		return (-1);
 	}
 	if (handle_death(philo))
 	{
-		if (pthread_mutex_unlock(philo->msg) != 0)
-			return (-1);
-		return (-1);
+		return (1);
 	}
+	pthread_mutex_lock(philo->msg);
 	printf("[%lu ms]Philo #%d has taken a fork\n", time - philo->starting_time, philo->id);
 	printf("[%lu ms]Philo #%d has taken a fork\n", time - philo->starting_time, philo->id);
 	printf("[%lu ms]Philo #%d is eating\n", time - philo->starting_time, philo->id);
-	if (pthread_mutex_unlock(philo->msg) != 0)
-		return (-1);
+	pthread_mutex_unlock(philo->msg);
 	philo->last_meal_time = time;
 	philo->meals++;
 	time = philo->config[TIME_TO_EAT];
 	if (philo->config[TIME_TO_EAT] > philo->config[TIME_TO_DIE])
 		time = philo->config[TIME_TO_DIE];
 	usleep(time * 1000);
-	if (put_down_both_forks(philo))
-		return (-1);
 	return (0);
 }
 
@@ -308,7 +274,10 @@ int	philo_eat(t_philo *philo)
 		}
 		ret = take_fork(philo->borrowed_fork);
 		if (ret == -1)
+		{
+			put_down_fork(philo->own_fork);
 			return (-1);
+		}
 		else if (ret == 0)
 		{
 			if (put_down_fork(philo->own_fork))
@@ -316,10 +285,12 @@ int	philo_eat(t_philo *philo)
 			usleep(500);
 			continue;
 		}
-		if (print_eat_msg(philo))
+		if (put_down_both_forks(philo))
 			return (-1);
-		if (philo->id % 2)
-			usleep(10);
+		if (print_eat_msg(philo))
+		{
+			return (-1);
+		}
 		break;
 	}
 	return (0);
@@ -329,17 +300,14 @@ int	philo_sleep(t_philo *philo)
 {
 	unsigned long	time;
 
-	if (pthread_mutex_lock(philo->msg) != 0)
-		return (-1);
+	pthread_mutex_lock(philo->msg);
 	if (get_time(&time))
 	{
-		if (pthread_mutex_unlock(philo->msg) != 0)
-			return (-1);
+		pthread_mutex_unlock(philo->msg);
 		return (-1);
 	}
 	printf("[%lu ms]Philo #%d is sleeping\n", time - philo->starting_time, philo->id);
-	if (pthread_mutex_unlock(philo->msg) != 0)
-		return (-1);
+	pthread_mutex_unlock(philo->msg);
 	time -= philo->last_meal_time;
 	if ((unsigned long)(time) + (unsigned long)(philo->config[TIME_TO_SLEEP]) > (unsigned long)(philo->config[TIME_TO_DIE]))
 		time = philo->config[TIME_TO_DIE] - time;
@@ -354,16 +322,24 @@ void	*routine(void *arg)
 	t_philo	*philo;
 
 	philo = (t_philo *)(arg);
+	if (philo->id % 2)
+		usleep(1000);
 	while (1)
 	{
-		if (handle_death(philo))
-			return (NULL);
+	//	if (handle_death(philo))
+	//		return (NULL);
 		if (philo_eat(philo))
+		{
 			return (NULL);
+		}
 		if (handle_death(philo))
+		{
 			return (NULL);
+		}
 		if (philo_sleep(philo))
+		{
 			return (NULL);
+		}
 	}
 }
 
@@ -438,6 +414,18 @@ int	init_sim(t_sim *sim, int ac, char **av)
 	return (0);
 }
 
+int	join_philo(t_philo *philo)
+{
+	pthread_join(philo->thread, NULL);
+	return (0);
+}
+
+int	destroy_fork(t_philo *philo)
+{
+	pthread_mutex_destroy(&philo->own_fork->forklock);
+	return (0);
+}
+
 int	main(int ac, char **av)
 {
 	t_sim	sim;
@@ -450,16 +438,13 @@ int	main(int ac, char **av)
 	i = 0;
 	while (i < sim.config[PHILO_NB])
 	{
-		if (pthread_join(sim.philos[i].thread, NULL) != 0)
-		{
-			//handle thread joining failure
-			return (8);
-		}
-		if (pthread_mutex_destroy(&sim.philos[i].own_fork->forklock) != 0)
-		{
-			//handle mutex destroy failure
-			return (9);
-		}
+		join_philo(&sim.philos[i]);
+		i++;
+	}
+	i = 0;
+	while (i < sim.config[PHILO_NB])
+	{
+		destroy_fork(&sim.philos[i]);
 		free(sim.philos[i].own_fork);
 		i++;
 	}
