@@ -270,9 +270,11 @@ int	philo_eat(t_philo *philo)
 			usleep(500);
 			continue;
 		}
-		put_down_both_forks(philo);
+		if (handle_death(philo))
+			return (-1);
 		if (print_eat_msg(philo))
 			return (-1);
+		put_down_both_forks(philo);
 		break;
 	}
 	return (0);
