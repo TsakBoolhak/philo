@@ -166,14 +166,21 @@ int	get_time(unsigned long *time)
 
 int	check_death(t_philo *philo)
 {
+	int	ret;
+
+	ret = 0;
 	pthread_mutex_lock(&philo->quit->quitlock);
 	if (philo->quit->status != 0)
-	{
-		pthread_mutex_unlock(&philo->quit->quitlock);
-		return (1);
-	}
+		ret = 1;
 	pthread_mutex_unlock(&philo->quit->quitlock);
-	return (0);
+	return (ret);
+}
+
+void	print_msg(unsigned long time, int id, char *str, pthread_mutex_t *mtx)
+{
+	pthread_mutex_lock(mtx);
+	printf("[%lu ms]Philo #%d %s\n", time, id, str);
+	pthread_mutex_unlock(mtx);
 }
 
 int	handle_death(t_philo *philo)
@@ -189,10 +196,8 @@ int	handle_death(t_philo *philo)
 		pthread_mutex_lock(&philo->quit->quitlock);
 		if (philo->quit->status == 0)
 		{
-			pthread_mutex_lock(philo->msg);
-			printf("[%lu ms]Philo #%d died\n", time - philo->starting_time, philo->id);
+			print_msg(time - philo->starting_time, philo->id, "died", philo->msg);
 			philo->quit->status = philo->id;
-			pthread_mutex_unlock(philo->msg);
 		}
 		pthread_mutex_unlock(&philo->quit->quitlock);
 		return (1);
@@ -200,35 +205,32 @@ int	handle_death(t_philo *philo)
 	return (0);
 }
 
-int	put_down_fork(t_fork *fork)
+void	put_down_fork(t_fork *fork)
 {
 	pthread_mutex_lock(&fork->forklock);
 	fork->status = UNLOCKED;
 	pthread_mutex_unlock(&fork->forklock);
-	return (0);
 }
 
-int	put_down_both_forks(t_philo *philo)
+void	put_down_both_forks(t_philo *philo)
 {
-	if (put_down_fork(philo->own_fork))
-		return (-1);
-	if (put_down_fork(philo->borrowed_fork))
-		return (-1);
-	return (0);
+	put_down_fork(philo->own_fork);
+	put_down_fork(philo->borrowed_fork);
 }
 
 int	take_fork(t_fork *fork)
 {
+	int	ret;
+
+	ret = 0;
 	pthread_mutex_lock(&fork->forklock);
-	if (fork->status == LOCKED)
+	if (fork->status == UNLOCKED)
 	{
-		pthread_mutex_unlock(&fork->forklock);
-		return (0);
-	}
-	else
 		fork->status = LOCKED;
+		ret = 1;
+	}
 	pthread_mutex_unlock(&fork->forklock);
-	return (1);
+	return (ret);
 }
 
 int	print_eat_msg(t_philo *philo)
@@ -236,18 +238,12 @@ int	print_eat_msg(t_philo *philo)
 	unsigned long	time;
 
 	if (get_time(&time))
-	{
 		return (-1);
-	}
 	if (handle_death(philo))
-	{
 		return (1);
-	}
-	pthread_mutex_lock(philo->msg);
-	printf("[%lu ms]Philo #%d has taken a fork\n", time - philo->starting_time, philo->id);
-	printf("[%lu ms]Philo #%d has taken a fork\n", time - philo->starting_time, philo->id);
-	printf("[%lu ms]Philo #%d is eating\n", time - philo->starting_time, philo->id);
-	pthread_mutex_unlock(philo->msg);
+	print_msg(time - philo->starting_time, philo->id, "has taken a fork", philo->msg);
+	print_msg(time - philo->starting_time, philo->id, "has taken a fork", philo->msg);
+	print_msg(time - philo->starting_time, philo->id, "is eating", philo->msg);
 	philo->last_meal_time = time;
 	philo->meals++;
 	time = philo->config[TIME_TO_EAT];
@@ -259,38 +255,24 @@ int	print_eat_msg(t_philo *philo)
 
 int	philo_eat(t_philo *philo)
 {
-	int	ret;
 	while (1)
 	{
 		if (handle_death(philo))
 			return (-1);
-		ret = take_fork(philo->own_fork);
-		if (ret == -1)
-			return (-1);
-		else if (ret == 0)
+		if (take_fork(philo->own_fork) == 0)
 		{
 			usleep(500);
 			continue;
 		}
-		ret = take_fork(philo->borrowed_fork);
-		if (ret == -1)
+		if (take_fork(philo->borrowed_fork) == 0)
 		{
 			put_down_fork(philo->own_fork);
-			return (-1);
-		}
-		else if (ret == 0)
-		{
-			if (put_down_fork(philo->own_fork))
-				return (-1);
 			usleep(500);
 			continue;
 		}
-		if (put_down_both_forks(philo))
-			return (-1);
+		put_down_both_forks(philo);
 		if (print_eat_msg(philo))
-		{
 			return (-1);
-		}
 		break;
 	}
 	return (0);
@@ -300,16 +282,11 @@ int	philo_sleep(t_philo *philo)
 {
 	unsigned long	time;
 
-	pthread_mutex_lock(philo->msg);
 	if (get_time(&time))
-	{
-		pthread_mutex_unlock(philo->msg);
 		return (-1);
-	}
-	printf("[%lu ms]Philo #%d is sleeping\n", time - philo->starting_time, philo->id);
-	pthread_mutex_unlock(philo->msg);
+	print_msg(time - philo->starting_time, philo->id, "is sleeping", philo->msg);
 	time -= philo->last_meal_time;
-	if ((unsigned long)(time) + (unsigned long)(philo->config[TIME_TO_SLEEP]) > (unsigned long)(philo->config[TIME_TO_DIE]))
+	if (time + (unsigned long)(philo->config[TIME_TO_SLEEP]) > (unsigned long)(philo->config[TIME_TO_DIE]))
 		time = philo->config[TIME_TO_DIE] - time;
 	else
 		time = philo->config[TIME_TO_SLEEP];
