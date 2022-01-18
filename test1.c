@@ -5,6 +5,7 @@
 #include <limits.h>
 #include <string.h>
 #include <sys/time.h>
+#include <limits.h>
 
 typedef enum e_config_index
 {
@@ -157,7 +158,7 @@ int	get_time(unsigned long *time)
 	unsigned long	ret;
 
 	if (gettimeofday(&tv, NULL) != 0)
-		return (1);
+		return (-1);
 	ret = (unsigned long)(tv.tv_sec) * 1000;
 	ret += (unsigned long)(tv.tv_usec) / 1000;
 	*time = ret;
@@ -176,33 +177,36 @@ int	check_death(t_philo *philo)
 	return (ret);
 }
 
-void	print_msg(unsigned long time, int id, char *str, pthread_mutex_t *mtx)
-{
-	pthread_mutex_lock(mtx);
-	printf("[%lu ms]Philo #%d %s\n", time, id, str);
-	pthread_mutex_unlock(mtx);
-}
+//void	print_msg(unsigned long time, int id, char *str, pthread_mutex_t *mtx)
+//{
+//	pthread_mutex_lock(mtx);
+//	printf("[%lu ms]Philo #%d %s\n", time, id, str);
+//	pthread_mutex_unlock(mtx);
+//}
 
 int	handle_death(t_philo *philo)
 {
 	unsigned long	time;
+	int				ret;
 
-	if (check_death(philo) == 1)
-		return (1);
-	if (get_time(&time) != 0)
-		return (-1);
-	if (time - philo->last_meal_time >= (unsigned long)philo->config[TIME_TO_DIE])
+	ret = 0;
+	pthread_mutex_lock(&philo->quit->quitlock);
+	ret = get_time(&time);
+	time -= philo->last_meal_time;
+	if (ret == -1)
+		;
+	else if (philo->quit->status > 0)
+		ret = 1;
+	else if (philo->quit->status == -1 * philo->config[PHILO_NB])
+		ret = 3;
+	else if (time >= (unsigned long)philo->config[TIME_TO_DIE])
 	{
-		pthread_mutex_lock(&philo->quit->quitlock);
-		if (philo->quit->status == 0)
-		{
-			print_msg(time - philo->starting_time, philo->id, "died", philo->msg);
+		if (philo->quit->status <= 0)
 			philo->quit->status = philo->id;
-		}
-		pthread_mutex_unlock(&philo->quit->quitlock);
-		return (1);
+		ret = 2;
 	}
-	return (0);
+	pthread_mutex_unlock(&philo->quit->quitlock);
+	return (ret);
 }
 
 void	put_down_fork(t_fork *fork)
@@ -233,19 +237,39 @@ int	take_fork(t_fork *fork)
 	return (ret);
 }
 
-int	print_eat_msg(t_philo *philo)
+void	print_eat_msg(int ret, t_philo *philo, unsigned long time)
+{
+	if (ret == 2)
+		printf("[%lu ms]Philo #%d has died\n", time, philo->id);
+	else if (ret == 0)
+	{
+		printf("[%lu ms]Philo #%d has taken a fork\n", time, philo->id);
+		printf("[%lu ms]Philo #%d has taken a fork\n", time, philo->id);
+		printf("[%lu ms]Philo #%d is eating\n", time, philo->id);
+	}
+}
+
+int	eat_action(t_philo *philo)
 {
 	unsigned long	time;
+	int				ret;
 
 	if (get_time(&time))
 		return (-1);
-	if (handle_death(philo))
+	pthread_mutex_lock(philo->msg);
+	ret = handle_death(philo);
+	print_eat_msg(ret, philo, time - philo->starting_time);
+	pthread_mutex_unlock(philo->msg);
+	if (ret != 0)
 		return (1);
-	print_msg(time - philo->starting_time, philo->id, "has taken a fork", philo->msg);
-	print_msg(time - philo->starting_time, philo->id, "has taken a fork", philo->msg);
-	print_msg(time - philo->starting_time, philo->id, "is eating", philo->msg);
 	philo->last_meal_time = time;
 	philo->meals++;
+	if (philo->meals == philo->config[MEALS_GOAL])
+	{
+		pthread_mutex_lock(&philo->quit->quitlock);
+		philo->quit->status--;
+		pthread_mutex_unlock(&philo->quit->quitlock);
+	}
 	time = philo->config[TIME_TO_EAT];
 	if (philo->config[TIME_TO_EAT] > philo->config[TIME_TO_DIE])
 		time = philo->config[TIME_TO_DIE];
@@ -253,40 +277,89 @@ int	print_eat_msg(t_philo *philo)
 	return (0);
 }
 
+void	assign_forks(t_fork **fork1, t_fork **fork2, t_philo *philo)
+{
+	*fork1 = philo->own_fork;
+	if (philo->id % 2)
+		*fork1 = philo->borrowed_fork;
+	*fork2 = philo->borrowed_fork;
+	if (philo->id % 2)
+		*fork1 = philo->own_fork;
+}
+
+int	check_end(t_philo *philo)
+{
+	unsigned long	time;
+	int		ret;
+
+	if (get_time(&time))
+		return (-1);
+	time -= philo->starting_time;
+	ret = handle_death(philo);
+	if (ret == 2)
+	{
+		pthread_mutex_lock(philo->msg);
+		printf("[%lu ms]Philo #%d has died\n", time, philo->id);
+		pthread_mutex_unlock(philo->msg);
+	}
+	return (ret);
+}
+
+int	eat_cycle(t_philo *philo, t_fork *fork1, t_fork *fork2)
+{
+	if (check_end(philo))
+		return (-1);
+	if (take_fork(fork1) == 0)
+	{
+		usleep(500);
+		return (1);
+	}
+	if (take_fork(fork2) == 0)
+	{
+		put_down_fork(fork1);
+		usleep(500);
+		return (1);
+	}
+	if (eat_action(philo))
+	{
+		put_down_both_forks(philo);
+		return (-1);
+	}
+	put_down_both_forks(philo);
+	return (0);
+}
+
 int	philo_eat(t_philo *philo)
 {
-	while (1)
+	t_fork	*fork1;
+	t_fork	*fork2;
+	int		ret;
+
+	assign_forks(&fork1, &fork2, philo);
+	ret = eat_cycle(philo, fork1, fork2);
+	while (ret == 1)
 	{
-		if (handle_death(philo))
-			return (-1);
-		if (take_fork(philo->own_fork) == 0)
-		{
-			usleep(500);
-			continue;
-		}
-		if (take_fork(philo->borrowed_fork) == 0)
-		{
-			put_down_fork(philo->own_fork);
-			usleep(500);
-			continue;
-		}
-		if (handle_death(philo))
-			return (-1);
-		if (print_eat_msg(philo))
-			return (-1);
-		put_down_both_forks(philo);
-		break;
+		ret = eat_cycle(philo, fork1, fork2);
 	}
-	return (0);
+	return (ret);
 }
 
 int	philo_sleep(t_philo *philo)
 {
 	unsigned long	time;
+	int				ret;
 
 	if (get_time(&time))
 		return (-1);
-	print_msg(time - philo->starting_time, philo->id, "is sleeping", philo->msg);
+	pthread_mutex_lock(philo->msg);
+	ret = handle_death(philo);
+	if (ret == 2)
+		printf("[%lu ms]Philo #%d has died\n", time - philo->starting_time, philo->id);
+	else if (ret == 0)
+	{
+		printf("[%lu ms]Philo #%d is sleeping\n", time - philo->starting_time, philo->id);
+	}
+	pthread_mutex_unlock(philo->msg);
 	time -= philo->last_meal_time;
 	if (time + (unsigned long)(philo->config[TIME_TO_SLEEP]) > (unsigned long)(philo->config[TIME_TO_DIE]))
 		time = philo->config[TIME_TO_DIE] - time;
@@ -302,23 +375,13 @@ void	*routine(void *arg)
 
 	philo = (t_philo *)(arg);
 	if (philo->id % 2)
-		usleep(1000);
+		usleep(10000);
 	while (1)
 	{
-	//	if (handle_death(philo))
-	//		return (NULL);
 		if (philo_eat(philo))
-		{
 			return (NULL);
-		}
-		if (handle_death(philo))
-		{
-			return (NULL);
-		}
 		if (philo_sleep(philo))
-		{
 			return (NULL);
-		}
 	}
 }
 
@@ -326,6 +389,7 @@ int	init_sim(t_sim *sim, int ac, char **av)
 {
 	char	*end;
 	int		i;
+	long	value;
 
 	if (pthread_mutex_init(&sim->quit.quitlock, NULL) != 0)
 		return (1);
@@ -339,9 +403,10 @@ int	init_sim(t_sim *sim, int ac, char **av)
 	i = 1;
 	while (i < ac)
 	{
-		sim->config[i - 1] = ft_strtoll(av[i], &end);
-		if (end == av[i] || *end != '\0' || sim->config[i - 1] < 0)
+		value = ft_strtoll(av[i], &end);
+		if (end == av[i] || *end != '\0' || value < 0 || value > INT_MAX)
 			return (3);
+		sim->config[i - 1] = ft_strtoll(av[i], &end);
 		i++;
 	}
 //	print_config(sim->config);
@@ -388,7 +453,21 @@ int	init_sim(t_sim *sim, int ac, char **av)
 			return (7);
 		}
 	//	print_philo(sim->philos[i]);
-		i++;
+		i += 2;
+	}
+	i = 1;
+	while (i < sim->config[PHILO_NB])
+	{
+		sim->philos[i].last_meal_time = sim->starting_time;
+		sim->philos[i].starting_time = sim->starting_time;
+		sim->philos[i].borrowed_fork = sim->philos[(sim->philos[i].id != sim->config[PHILO_NB]) * (i + 1)].own_fork;
+		if (pthread_create(&sim->philos[i].thread, NULL, &routine, &sim->philos[i]) != 0)
+		{
+			//handle thread creating failure here
+			return (7);
+		}
+	//	print_philo(sim->philos[i]);
+		i += 2;
 	}
 	return (0);
 }
@@ -415,8 +494,12 @@ int	main(int ac, char **av)
 	if (ret != 0)
 		return (ret);
 	i = 0;
+//	usleep(5000*1000);
 	while (i < sim.config[PHILO_NB])
 	{
+//		pthread_mutex_lock(&sim.msg);
+//		printf("##%d\n", i);
+//		pthread_mutex_unlock(&sim.msg);
 		join_philo(&sim.philos[i]);
 		i++;
 	}
