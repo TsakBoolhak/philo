@@ -35,8 +35,8 @@ int	philo_sleep(t_philo *philo)
 	if (ret)
 		return (1);
 	time -= philo->last_meal_time;
-	time += (unsigned long)(philo->config[TIME_TO_SLEEP]);
-	if (time > (unsigned long)(philo->config[TIME_TO_DIE]))
+	timestamp = time + (unsigned long)(philo->config[TIME_TO_SLEEP]);
+	if (timestamp > (unsigned long)(philo->config[TIME_TO_DIE]))
 		time = philo->config[TIME_TO_DIE] - time;
 	else
 		time = philo->config[TIME_TO_SLEEP];
